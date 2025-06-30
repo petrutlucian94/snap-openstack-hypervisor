@@ -296,8 +296,8 @@ def to_output_schema(nics: list[Interface]) -> NicList:
             for spec_dict in pci_spec_cfg:
                 pci_spec = devspec.PciDeviceSpec(spec_dict)
                 dev = {
-                    "vendor_id": out.vendor_id,
-                    "product_id": out.product_id,
+                    "vendor_id": out.vendor_id.lstrip("0x"),
+                    "product_id": out.product_id.lstrip("0x"),
                     "address": out.pci_address,
                     "parent_addr": out.pf_pci_address,
                 }
