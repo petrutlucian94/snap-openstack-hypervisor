@@ -157,17 +157,6 @@ All of the above options must be provided as base64 encoded strings.
 
 SR-IOV agent settings:
 
-* `network.sriov-nic-physical-device-mappings` SR-IOV agent device mappings
-
-Comma-separated list of `<physical_network>:<network_device>` tuples mapping physical
-network names to the network device interfaces of SR-IOV physical function.
-
-If unspecified, it will be determined automatically by the snap based on the list of
-SR-IOV devices provided through the `compute.pci-device-specs` setting.
-
-The network adapters that support hardware offloading (switchdev) are expected to be
-processed by the OVN mechanism driver and will not be included in this list.
-
 * `network.sriov-nic-exclude-devices`: SR-IOV excluded VFs
 
 Comma-separated list of `<network_device>:<vfs_to_exclude>` tuples, mapping interfaces

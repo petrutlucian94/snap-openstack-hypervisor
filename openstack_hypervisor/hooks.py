@@ -277,7 +277,6 @@ DEFAULT_CONFIG = {
     "network.ip-address": _get_local_ip_by_default_route,  # noqa: F821
     "network.external-nic": UNSET,
     "network.sriov-nic-exclude-devices": UNSET,
-    "network.sriov-nic-physical-device-mappings": UNSET,
     # Monitoring
     "monitoring.enable": False,
     # General
@@ -1504,8 +1503,6 @@ def _services_not_enabled_by_config(context: dict) -> List[str]:
     if not context.get("masakari", {}).get("enable"):
         not_enabled.append("masakari-instancemonitor")
 
-    # TODO: handle sriov agent here.
-
     return not_enabled
 
 
@@ -1550,6 +1547,7 @@ def _should_sriov_agent_manage_nic(nic, physnet=None):
 
 
 def _determine_sriov_device_mappings(snap: Snap) -> str:
+    logging.info("Determining SR-IOV physical device mappings.")
     nics = interfaces.get_nics().root
     # Retrieve SR-IOV PFs that have been whitelisted, including
     # those that have whitelisted VFs.
@@ -1593,20 +1591,9 @@ def _determine_sriov_device_mappings(snap: Snap) -> str:
     return mappings_str
 
 
-def _configure_sriov(snap: Snap) -> None:
-    """Configure SRIOV.
-
-    :param snap: the snap reference
-    :type snap: Snap
-    :return: None
-    """
-    logging.info("Determining SR-IOV physical device mappings.")
-
-    physical_device_mappings = _determine_sriov_device_mappings(snap)
-    snap.config.set({"network.sriov-nic-physical-device-mappings": physical_device_mappings})
-
+def _configure_sriov_agent_service(snap: Snap, enabled: bool) -> None:
     sriov_service = snap.services.list()["neutron-sriov-nic-agent"]
-    if physical_device_mappings:
+    if enabled:
         logging.info("SR-IOV mappings detected, enabling SR-IOV agent.")
         sriov_service.start(enable=True)
     else:
@@ -1665,6 +1652,9 @@ def configure(snap: Snap) -> None:
     for service in exclude_services:
         services[service].stop()
 
+    physical_device_mappings = _determine_sriov_device_mappings(snap)
+    context["network"]["sriov_nic_physical_device_mappings"] = physical_device_mappings
+
     with RestartOnChange(snap, {**TEMPLATES, **TLS_TEMPLATES}, exclude_services):
         for config_file, template in TEMPLATES.items():
             tpl_name = template.get("template")
@@ -1691,4 +1681,4 @@ def configure(snap: Snap) -> None:
     _configure_monitoring_services(snap)
     _configure_ceph(snap)
     _configure_masakari_services(snap)
-    _configure_sriov(snap)
+    _configure_sriov_agent_service(snap, bool(physical_device_mappings))
