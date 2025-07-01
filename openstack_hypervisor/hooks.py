@@ -1529,33 +1529,68 @@ def _add_compute_flavor(snap: Snap, flavor: str) -> None:
     snap.config.set({"compute.flavors": updated_flavors})
 
 
+def _should_sriov_agent_manage_nic(nic, physnet=None):
+    physnet = physnet or nic.pci_physnet
+    if not nic.name:
+        logging.warning("Missing nic name, ignoring. PCI address: %s", nic.pci_address)
+        return False
+    if not nic.sriov_available:
+        logging.info("nic %s: SR-IOV not available, ignoring.", nic.name)
+        return False
+    if not physnet:
+        logging.info("nic %s: no physnet specified, ignoring.", nic.name)
+        return False
+    if nic.hw_offload_available:
+        logging.info(
+            "nic %s: hw offload available, ignoring. OVN is expected to handle this device.",
+            nic.name,
+        )
+        return False
+    return True
+
+
 def _determine_sriov_device_mappings(snap: Snap) -> str:
     nics = interfaces.get_nics().root
     # Retrieve SR-IOV PFs that have been whitelisted, including
     # those that have whitelisted VFs.
     mappings = []
 
-    def _should_manage(nic, physnet=None):
-        # Devices that support hw offload are expected to be managed by ovn.
-        physnet = physnet or nic.pci_physnet
-        return nic.sriov_available and physnet and nic.name and not nic.hw_offload_available
-
     for nic in nics:
-        if nic.pci_whitelisted and _should_manage(nic):
+        if not nic.pci_whitelisted:
+            logging.info("nic %s: not whitelisted, ignoring.", nic.name)
+            continue
+        if _should_sriov_agent_manage_nic(nic):
+            logging.info("nic %s: PF whitelisted, adding to SR-IOV agent mappings.", nic.name)
             mappings.append(f"{nic.pci_physnet}:{nic.name}")
 
     # Get PFs containing whitelisted VFs.
     for nic in nics:
-        if nic.pci_whitelisted and nic.pf_pci_address:
-            # The VF is whitelisted, look up the PF.
-            #
-            # We'll use the physnet of the VF.
-            physnet = nic.pci_physnet
-            for pf in nics:
-                if pf.pci_address == nic.pf_pci_address and _should_manage(pf, physnet=physnet):
-                    mappings.append(f"{physnet}:{pf.name}")
+        if not nic.pci_whitelisted:
+            logging.info("nic %s: not whitelisted, ignoring.", nic.name)
+            continue
+        if not nic.pf_pci_address:
+            logging.info("nic %s: no parent PF address", nic.name)
+            continue
 
-    return ",".join(list(set(mappings)))
+        # The VF is whitelisted, look up the PF.
+        #
+        # We'll use the physnet of the VF.
+        physnet = nic.pci_physnet
+        for pf in nics:
+            if pf.pci_address != nic.pf_pci_address:
+                continue
+
+            logging.info("nic %s: found parent PF: %s", nic.name)
+            if _should_sriov_agent_manage_nic(pf, physnet=physnet):
+                logging.info(
+                    "nic %s: found whiteliested VFs, adding to SR-IOV agent mappings.", nic.name
+                )
+                mappings.append(f"{physnet}:{pf.name}")
+
+    mappings_str = ",".join(list(set(mappings)))
+    logging.info("SR-IOV agent mappings: %s", mappings_str)
+
+    return mappings_str
 
 
 def _configure_sriov(snap: Snap) -> None:
