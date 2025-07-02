@@ -1601,6 +1601,26 @@ def _configure_sriov_agent_service(snap: Snap, enabled: bool) -> None:
         sriov_service.stop(disable=True)
 
 
+def _set_config_context(context, group, key, val):
+    if group not in context:
+        context[group] = {}
+    context[group][key] = val
+
+
+def _to_json_list(val):
+    """Convert a list of dictionaries (optionally as a string) to a list of JSONs.
+
+    Examples:
+    >>> _to_json_list([{'address': '00:00:00:00.0'}])
+    ['{"address": "00:00:00:00.0"}']
+    >>> _to_json_list('[{"address": "00:00:00:00.0"}]')
+    ['{"address": "00:00:00:00.0"}']
+    """
+    if isinstance(val, str):
+        val = json.loads(val) or []
+    return [json.dumps(element) for element in val]
+
+
 def configure(snap: Snap) -> None:
     """Runs the `configure` hook for the snap.
 
@@ -1653,15 +1673,15 @@ def configure(snap: Snap) -> None:
         services[service].stop()
 
     physical_device_mappings = _determine_sriov_device_mappings(snap)
-    context["network"]["sriov_nic_physical_device_mappings"] = physical_device_mappings
+    _set_config_context(
+        context, "network", "sriov_nic_physical_device_mappings", physical_device_mappings
+    )
 
-    pci_device_specs = context["compute"].get("pci_device_specs") or []
-    if isinstance(pci_device_specs, str):
-        context["compute"]["pci_device_specs"] = json.loads(pci_device_specs)
+    pci_device_specs = context.get("compute", {}).get("pci_device_specs")
+    _set_config_context(context, "compute", "pci_device_specs", _to_json_list(pci_device_specs))
 
-    pci_aliases = context["compute"].get("pci_aliases") or []
-    if isinstance(pci_aliases, str):
-        context["compute"]["pci_aliases"] = json.loads(pci_aliases)
+    pci_aliases = context.get("compute", {}).get("pci_aliases")
+    _set_config_context(context, "compute", "pci_aliases", _to_json_list(pci_aliases))
 
     with RestartOnChange(snap, {**TEMPLATES, **TLS_TEMPLATES}, exclude_services):
         for config_file, template in TEMPLATES.items():
