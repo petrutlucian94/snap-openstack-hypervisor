@@ -253,16 +253,25 @@ def filter_candidate_nics(nics: Iterable[Interface]) -> list[str]:
     return configured_nics
 
 
+def _get_pci_spec_cfg():
+    snap = Snap()
+
+    try:
+        pci_spec_cfg = snap.config.get("compute.pci-device-specs") or []
+        if isinstance(pci_spec_cfg, str):
+            pci_spec_cfg = json.loads(pci_spec_cfg)
+    except UnknownConfigKey:
+        # Unfortunately snap.config.get doesn't take a default value...
+        pci_spec_cfg = []
+
+    return pci_spec_cfg
+
+
 def to_output_schema(nics: list[Interface]) -> NicList:
     """Convert the interfaces to the output schema."""
     nics_ = []
 
-    snap = Snap()
-    try:
-        pci_spec_cfg = snap.config.get("compute.pci-device-specs")
-    except UnknownConfigKey:
-        # Unfortunately snap.config.get doesn't take a default value...
-        pci_spec_cfg = []
+    pci_spec_cfg = _get_pci_spec_cfg()
 
     for nic in nics:
         ifname = nic["ifname"]
@@ -294,6 +303,9 @@ def to_output_schema(nics: list[Interface]) -> NicList:
 
         if out.pci_address and out.vendor_id and out.product_id:
             for spec_dict in pci_spec_cfg:
+                if not isinstance(spec_dict, dict):
+                    raise ValueError("Invalid device spec, expecting a dict: %s." % spec_dict)
+
                 pci_spec = devspec.PciDeviceSpec(spec_dict)
                 dev = {
                     "vendor_id": out.vendor_id.lstrip("0x"),

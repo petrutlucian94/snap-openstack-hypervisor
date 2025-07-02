@@ -1655,6 +1655,14 @@ def configure(snap: Snap) -> None:
     physical_device_mappings = _determine_sriov_device_mappings(snap)
     context["network"]["sriov_nic_physical_device_mappings"] = physical_device_mappings
 
+    pci_device_specs = context["compute"].get("pci_device_specs") or []
+    if isinstance(pci_device_specs, str):
+        context["compute"]["pci_device_specs"] = json.loads(pci_device_specs)
+
+    pci_aliases = context["compute"].get("pci_aliases") or []
+    if isinstance(pci_aliases, str):
+        context["compute"]["pci_aliases"] = json.loads(pci_aliases)
+
     with RestartOnChange(snap, {**TEMPLATES, **TLS_TEMPLATES}, exclude_services):
         for config_file, template in TEMPLATES.items():
             tpl_name = template.get("template")
