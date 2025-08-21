@@ -652,6 +652,15 @@ def _ovs_vsctl_set(table: str, record: str, column: str, settings: dict[str, str
     subprocess.check_call(cmd)
 
 
+def _ovs_vsctl_remove(table: str, record: str, column: str, keys: list[str]) -> None:
+    if not keys:
+        logging.warning("No ovs keys to remove, skipping...")
+        return
+
+    cmd = ["ovs-vsctl", "--retry", "--if-exists", "remove", table, record, column, *keys]
+    subprocess.check_call(cmd)
+
+
 def _parse_ovsdb_data(data: list[str, typing.Any]) -> typing.Any:
     """Parse OVSDB data.
 
@@ -693,17 +702,28 @@ def _ovs_vsctl_list_table(table: str, record: str, columns: list[str] | None) ->
 
 
 def _ovs_vsctl_set_check(table: str, record: str, column: str, settings: dict[str, str]) -> bool:
-    """Apply the specified settings and return a boolean stating if changes were made."""
-    config_changed = False
-    current_values = _ovs_vsctl_list_table(table, record, [column]).get(column, {})
+    """Apply the specified settings and return a boolean stating if changes were made.
+
+    Use the None value to remove keys.
+    """
+    modified_settings = {}
+    removed_keys = []
+
+    current_settings = _ovs_vsctl_list_table(table, record, [column]).get(column, {})
     for key, new_val in settings.items():
-        if key not in current_values or str(new_val) != str(current_values[key]):
-            config_changed = True
+        if new_val is None and key in current_settings:
+            removed_keys.append(key)
+            continue
 
-    if config_changed:
-        _ovs_vsctl_set(table, record, column, settings)
+        if key not in current_settings or str(new_val) != str(current_settings[key]):
+            modified_settings[key] = new_val
 
-    return config_changed
+    if modified_settings:
+        _ovs_vsctl_set(table, record, column, modified_settings)
+    if removed_keys:
+        _ovs_vsctl_remove(table, record, column, removed_keys)
+
+    return bool(modified_settings or removed_keys)
 
 
 def _configure_ovn_base(snap: Snap, context: dict) -> None:
@@ -782,16 +802,21 @@ def _get_dpdk_pmd_dir(snap: Snap) -> str:
 def _configure_ovs(snap: Snap, context: dict) -> bool:
     """Configure OVS and return a boolean stating whether there were any changes made."""
     config_changed = False
+    # Values set to "None" will be unset.
+    unset_value = None
 
     # See the "Open_vSwitch TABLE" section of "man ovs-vswitchd.conf.db" for more
     # details.
     hw_offloading = context.get("network", {}).get("hw_offloading")
     if hw_offloading:
         logging.info("Configuring Open vSwitch hardware offloading.")
-        if _ovs_vsctl_set_check("Open_vSwitch", ".", "other_config", {"hw-offload": "true"}):
-            config_changed = True
+        ovs_hw_offloading = "true"
     else:
         logging.info("No whitelisted SR-IOV devices with hardware offloading.")
+        ovs_hw_offloading = unset_value
+
+    if _ovs_vsctl_set_check("Open_vSwitch", ".", "other_config", {"hw-offload": ovs_hw_offloading}):
+        config_changed = True
 
     dpdk_settings = {}
     ovs_dpdk_enabled = context.get("network", {}).get("ovs_dpdk_enabled")
@@ -805,19 +830,18 @@ def _configure_ovs(snap: Snap, context: dict) -> bool:
         # Point DPDK to the right PMD plugin directory.
         pmd_lib_dir = _get_dpdk_pmd_dir(snap)
         dpdk_settings["dpdk-extra"] = f"-d {pmd_lib_dir}"
-    if ovs_memory:
-        dpdk_settings["dpdk-socket-mem"] = ovs_memory
-    if ovs_lcore_mask:
-        dpdk_settings["dpdk-lcore-mask"] = ovs_lcore_mask
-    if ovs_pmd_cpu_mask:
-        dpdk_settings["pmd-cpu-mask"] = ovs_pmd_cpu_mask
-
-    if dpdk_settings:
-        logging.debug("Applying DPDK settings: %s", dpdk_settings)
-        if _ovs_vsctl_set_check("Open_vSwitch", ".", "other_config", dpdk_settings):
-            config_changed = True
     else:
-        logging.debug("No OVS DPDK settings provided.")
+        dpdk_settings["dpdk-init"] = unset_value
+        dpdk_settings["dpdk-extra"] = unset_value
+
+    dpdk_settings["dpdk-socket-mem"] = ovs_memory or unset_value
+    dpdk_settings["dpdk-socket-mem"] = unset_value or unset_value
+    dpdk_settings["dpdk-lcore-mask"] = ovs_lcore_mask or unset_value
+    dpdk_settings["pmd-cpu-mask"] = ovs_pmd_cpu_mask or unset_value
+
+    logging.debug("Applying DPDK settings: %s", dpdk_settings)
+    if _ovs_vsctl_set_check("Open_vSwitch", ".", "other_config", dpdk_settings):
+        config_changed = True
 
     return config_changed
 
